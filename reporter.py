@@ -1,0 +1,890 @@
+#!/usr/bin/env python3
+"""
+Report Generator - Generates scan reports in multiple formats
+
+Author: Jai
+"""
+
+import json
+import csv
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+from dataclasses import asdict
+
+
+class ReportGenerator:
+    """
+    Generates scan reports in multiple formats:
+    - JSON: Machine-readable detailed report
+    - HTML: Human-readable visual report
+    - CSV: Spreadsheet-compatible summary
+    """
+    
+    def save(self, report: Any, filename: str, format: str = "json"):
+        """Save report in specified format"""
+        format_lower = format.lower()
+        
+        if format_lower == 'json':
+            self._save_json(report, filename)
+        elif format_lower == 'html':
+            self._save_html(report, filename)
+        elif format_lower == 'csv':
+            self._save_csv(report, filename)
+        else:
+            raise ValueError(f"Unsupported format: {format}")
+    
+    def _save_json(self, report: Any, filename: str):
+        """Save report as JSON"""
+        # Convert dataclasses to dicts
+        report_dict = self._to_dict(report)
+        
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(report_dict, f, indent=2, ensure_ascii=False, default=str)
+    
+    def _save_html(self, report: Any, filename: str):
+        """Save report as HTML"""
+        html = self._generate_html(report)
+        
+        with open(filename, 'w', encoding='utf-8') as f:
+            f.write(html)
+    
+    def _save_csv(self, report: Any, filename: str):
+        """Save report as CSV"""
+        with open(filename, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            
+            # Header
+            writer.writerow([
+                'Payload ID', 'Category', 'Name', 'Vulnerable', 
+                'Confidence', 'Indicators', 'Response Time', 'Error'
+            ])
+            
+            # Data rows
+            for result in report.results:
+                writer.writerow([
+                    result.payload_id,
+                    result.payload_category,
+                    result.payload_name,
+                    'Yes' if result.is_vulnerable else 'No',
+                    f'{result.confidence:.0%}',
+                    '; '.join(result.indicators_found),
+                    f'{result.response_time:.2f}s',
+                    result.error or ''
+                ])
+    
+    def _to_dict(self, obj: Any) -> Any:
+        """Recursively convert dataclasses to dictionaries"""
+        if hasattr(obj, '__dataclass_fields__'):
+            return {k: self._to_dict(v) for k, v in asdict(obj).items()}
+        elif isinstance(obj, list):
+            return [self._to_dict(item) for item in obj]
+        elif isinstance(obj, dict):
+            return {k: self._to_dict(v) for k, v in obj.items()}
+        return obj
+    
+    def _escape_html(self, text: str) -> str:
+        """Escape HTML special characters to prevent XSS"""
+        if not text:
+            return ""
+        return (str(text)
+                .replace('&', '&amp;')
+                .replace('<', '&lt;')
+                .replace('>', '&gt;')
+                .replace('"', '&quot;')
+                .replace("'", '&#39;'))
+    
+    def _generate_html(self, report: Any) -> str:
+        """Generate HTML report"""
+        vulnerable_count = report.successful_injections
+        total = report.total_payloads
+        risk_level = "CRITICAL" if vulnerable_count > total * 0.3 else "HIGH" if vulnerable_count > total * 0.1 else "MEDIUM" if vulnerable_count > 0 else "LOW"
+        risk_color = {"CRITICAL": "#dc3545", "HIGH": "#fd7e14", "MEDIUM": "#ffc107", "LOW": "#28a745"}[risk_level]
+        
+        # Group results by category
+        by_category = {}
+        for r in report.results:
+            cat = r.payload_category
+            if cat not in by_category:
+                by_category[cat] = {'vulnerable': 0, 'total': 0, 'results': []}
+            by_category[cat]['total'] += 1
+            if r.is_vulnerable:
+                by_category[cat]['vulnerable'] += 1
+            by_category[cat]['results'].append(r)
+        
+        html = f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prompt Injection Scan Report</title>
+    <style>
+        :root {{
+            --bg-primary: #1a1a2e;
+            --bg-secondary: #16213e;
+            --bg-card: #0f3460;
+            --text-primary: #eee;
+            --text-secondary: #aaa;
+            --accent: #e94560;
+            --success: #28a745;
+            --warning: #ffc107;
+            --danger: #dc3545;
+        }}
+        
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }}
+        
+        body {{
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+        }}
+        
+        .container {{
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }}
+        
+        header {{
+            background: var(--bg-secondary);
+            padding: 30px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }}
+        
+        header h1 {{
+            font-size: 2em;
+            color: var(--accent);
+        }}
+        
+        .risk-badge {{
+            padding: 15px 30px;
+            border-radius: 8px;
+            font-weight: bold;
+            font-size: 1.2em;
+            background: {risk_color};
+        }}
+        
+        .stats-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }}
+        
+        .stat-card {{
+            background: var(--bg-card);
+            padding: 25px;
+            border-radius: 10px;
+            text-align: center;
+        }}
+        
+        .stat-card .value {{
+            font-size: 2.5em;
+            font-weight: bold;
+            color: var(--accent);
+        }}
+        
+        .stat-card .label {{
+            color: var(--text-secondary);
+            margin-top: 10px;
+        }}
+        
+        .section {{
+            background: var(--bg-secondary);
+            padding: 25px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }}
+        
+        .section h2 {{
+            color: var(--accent);
+            margin-bottom: 20px;
+            border-bottom: 2px solid var(--bg-card);
+            padding-bottom: 10px;
+        }}
+        
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }}
+        
+        th, td {{
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid var(--bg-card);
+        }}
+        
+        th {{
+            background: var(--bg-card);
+            font-weight: 600;
+        }}
+        
+        tr:hover {{
+            background: rgba(233, 69, 96, 0.1);
+        }}
+        
+        .vulnerable {{
+            color: var(--danger);
+            font-weight: bold;
+        }}
+        
+        .defended {{
+            color: var(--success);
+        }}
+        
+        .confidence {{
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 4px;
+            font-size: 0.85em;
+        }}
+        
+        .confidence.high {{
+            background: var(--danger);
+        }}
+        
+        .confidence.medium {{
+            background: var(--warning);
+            color: #000;
+        }}
+        
+        .confidence.low {{
+            background: var(--success);
+        }}
+        
+        .category-summary {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }}
+        
+        .category-card {{
+            background: var(--bg-card);
+            padding: 20px;
+            border-radius: 8px;
+            border-left: 4px solid var(--accent);
+        }}
+        
+        .category-card h4 {{
+            margin-bottom: 10px;
+        }}
+        
+        .progress-bar {{
+            height: 8px;
+            background: var(--bg-primary);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 10px;
+        }}
+        
+        .progress-bar .fill {{
+            height: 100%;
+            background: var(--danger);
+            transition: width 0.3s;
+        }}
+        
+        .payload-text {{
+            font-family: monospace;
+            font-size: 0.85em;
+            background: var(--bg-primary);
+            padding: 8px;
+            border-radius: 4px;
+            max-width: 400px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }}
+        
+        .indicators {{
+            font-size: 0.85em;
+            color: var(--text-secondary);
+        }}
+        
+        /* Detailed payload section styles */
+        .detail-card {{
+            background: var(--bg-card);
+            border-radius: 10px;
+            margin-bottom: 20px;
+            overflow: hidden;
+            border: 1px solid rgba(233, 69, 96, 0.2);
+        }}
+        
+        .detail-card.vulnerable {{
+            border-left: 4px solid var(--danger);
+        }}
+        
+        .detail-card.defended {{
+            border-left: 4px solid var(--success);
+        }}
+        
+        .detail-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 20px;
+            background: rgba(0,0,0,0.2);
+            cursor: pointer;
+        }}
+        
+        .detail-header:hover {{
+            background: rgba(233, 69, 96, 0.1);
+        }}
+        
+        .detail-header h4 {{
+            margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }}
+        
+        .detail-meta {{
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }}
+        
+        .detail-body {{
+            display: none;
+            padding: 20px;
+        }}
+        
+        .detail-body.expanded {{
+            display: block;
+        }}
+        
+        .io-section {{
+            margin-bottom: 20px;
+        }}
+        
+        .io-section:last-child {{
+            margin-bottom: 0;
+        }}
+        
+        .io-label {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: var(--accent);
+        }}
+        
+        .io-content {{
+            background: var(--bg-primary);
+            border-radius: 8px;
+            padding: 15px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.9em;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid rgba(255,255,255,0.1);
+        }}
+        
+        .io-content.input {{
+            border-left: 3px solid #3b82f6;
+        }}
+        
+        .io-content.output {{
+            border-left: 3px solid #10b981;
+        }}
+        
+        .io-content.output.vulnerable {{
+            border-left: 3px solid var(--danger);
+            background: rgba(220, 53, 69, 0.1);
+        }}
+        
+        .badge {{
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 0.75em;
+            font-weight: bold;
+            text-transform: uppercase;
+        }}
+        
+        .badge-vulnerable {{
+            background: var(--danger);
+            color: white;
+        }}
+        
+        .badge-defended {{
+            background: var(--success);
+            color: white;
+        }}
+        
+        .badge-error {{
+            background: var(--warning);
+            color: black;
+        }}
+        
+        .badge-category {{
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+        }}
+        
+        .indicators-list {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 15px;
+        }}
+        
+        .indicator-tag {{
+            background: rgba(233, 69, 96, 0.2);
+            color: var(--accent);
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 0.8em;
+        }}
+        
+        .expand-icon {{
+            transition: transform 0.3s;
+        }}
+        
+        .detail-header.expanded .expand-icon {{
+            transform: rotate(180deg);
+        }}
+        
+        .filter-bar {{
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }}
+        
+        .filter-btn {{
+            padding: 8px 16px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            background: var(--bg-card);
+            color: var(--text-primary);
+            transition: all 0.2s;
+        }}
+        
+        .filter-btn:hover, .filter-btn.active {{
+            background: var(--accent);
+        }}
+        
+        .search-box {{
+            flex: 1;
+            min-width: 200px;
+            padding: 8px 16px;
+            border: 1px solid var(--bg-card);
+            border-radius: 5px;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+        }}
+        
+        .search-box:focus {{
+            outline: none;
+            border-color: var(--accent);
+        }}
+        
+        .expand-all-btn {{
+            background: var(--accent);
+            color: white;
+            padding: 8px 16px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-left: auto;
+        }}
+        
+        .copy-btn {{
+            padding: 4px 8px;
+            font-size: 0.75em;
+            background: var(--bg-card);
+            border: none;
+            border-radius: 4px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            float: right;
+        }}
+        
+        .copy-btn:hover {{
+            background: var(--accent);
+            color: white;
+        }}
+        
+        footer {{
+            text-align: center;
+            padding: 20px;
+            color: var(--text-secondary);
+            margin-top: 40px;
+        }}
+        
+        .collapsible {{
+            cursor: pointer;
+            padding: 10px;
+            background: var(--bg-card);
+            border-radius: 5px;
+            margin-bottom: 10px;
+        }}
+        
+        .collapsible:hover {{
+            background: rgba(233, 69, 96, 0.2);
+        }}
+        
+        .content {{
+            display: none;
+            padding: 15px;
+            background: var(--bg-primary);
+            border-radius: 0 0 5px 5px;
+            margin-top: -10px;
+            margin-bottom: 10px;
+        }}
+        
+        .content.active {{
+            display: block;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div>
+                <h1>🔍 Prompt Injection Scan Report</h1>
+                <p style="color: var(--text-secondary); margin-top: 10px;">
+                    Target: {report.target_url}<br>
+                    Scanned: {report.scan_start[:19]}
+                </p>
+            </div>
+            <div class="risk-badge">
+                {risk_level} RISK
+            </div>
+        </header>
+        
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="value">{report.total_payloads}</div>
+                <div class="label">Total Payloads</div>
+            </div>
+            <div class="stat-card">
+                <div class="value" style="color: var(--danger)">{report.successful_injections}</div>
+                <div class="label">Successful Injections</div>
+            </div>
+            <div class="stat-card">
+                <div class="value" style="color: var(--success)">{report.failed_injections}</div>
+                <div class="label">Blocked/Defended</div>
+            </div>
+            <div class="stat-card">
+                <div class="value" style="color: var(--warning)">{report.errors}</div>
+                <div class="label">Errors</div>
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>📊 Vulnerability by Category</h2>
+            <div class="category-summary">
+'''
+        
+        for cat, data in sorted(by_category.items(), key=lambda x: -x[1]['vulnerable']):
+            pct = (data['vulnerable'] / data['total'] * 100) if data['total'] > 0 else 0
+            html += f'''
+                <div class="category-card">
+                    <h4>{cat.replace('_', ' ').title()}</h4>
+                    <div>{data['vulnerable']} / {data['total']} vulnerable</div>
+                    <div class="progress-bar">
+                        <div class="fill" style="width: {pct}%"></div>
+                    </div>
+                </div>
+'''
+        
+        html += '''
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>⚠️ Successful Injections</h2>
+'''
+        
+        vulnerable_results = [r for r in report.results if r.is_vulnerable]
+        if vulnerable_results:
+            html += '''
+            <table>
+                <thead>
+                    <tr>
+                        <th>Category</th>
+                        <th>Payload Name</th>
+                        <th>Confidence</th>
+                        <th>Indicators</th>
+                    </tr>
+                </thead>
+                <tbody>
+'''
+            for r in sorted(vulnerable_results, key=lambda x: -x.confidence)[:20]:
+                conf_class = 'high' if r.confidence >= 0.7 else 'medium' if r.confidence >= 0.4 else 'low'
+                indicators = ', '.join(r.indicators_found[:3]) if r.indicators_found else 'N/A'
+                html += f'''
+                    <tr>
+                        <td>{r.payload_category}</td>
+                        <td>{r.payload_name}</td>
+                        <td><span class="confidence {conf_class}">{r.confidence:.0%}</span></td>
+                        <td class="indicators">{indicators}</td>
+                    </tr>
+'''
+            html += '''
+                </tbody>
+            </table>
+'''
+        else:
+            html += '<p style="color: var(--success)">✅ No successful injections detected!</p>'
+        
+        html += '''
+        </div>
+        
+        <div class="section">
+            <h2>� Detailed Payload Results (Input/Output)</h2>
+            <p style="color: var(--text-secondary); margin-bottom: 20px;">
+                Click on each card to expand and view full input payload and LLM response.
+            </p>
+            
+            <div class="filter-bar">
+                <button class="filter-btn active" onclick="filterResults('all')">All ({report.total_payloads})</button>
+                <button class="filter-btn" onclick="filterResults('vulnerable')">⚠️ Vulnerable ({report.successful_injections})</button>
+                <button class="filter-btn" onclick="filterResults('defended')">✅ Defended ({report.failed_injections})</button>
+                <input type="text" class="search-box" placeholder="Search payloads..." onkeyup="searchResults(this.value)">
+                <button class="expand-all-btn" onclick="toggleAllDetails()">Expand All</button>
+            </div>
+            
+            <div id="detailed-results">
+'''
+        
+        # Generate detailed cards for ALL results
+        for idx, r in enumerate(report.results):
+            status_class = 'vulnerable' if r.is_vulnerable else 'defended'
+            status_badge = 'badge-vulnerable' if r.is_vulnerable else 'badge-defended'
+            status_text = '⚠️ VULNERABLE' if r.is_vulnerable else '✅ DEFENDED'
+            if r.error:
+                status_badge = 'badge-error'
+                status_text = '❌ ERROR'
+            conf_class = 'high' if r.confidence >= 0.7 else 'medium' if r.confidence >= 0.4 else 'low'
+            
+            # Escape HTML in payload and response
+            payload_text = self._escape_html(getattr(r, 'payload_text', 'N/A'))
+            response_text = self._escape_html(getattr(r, 'response_text', 'N/A'))
+            
+            # Truncate for display but keep full in data attribute
+            indicators_html = ''
+            if r.indicators_found:
+                indicators_html = '<div class="indicators-list">'
+                for ind in r.indicators_found[:5]:
+                    indicators_html += f'<span class="indicator-tag">{self._escape_html(ind)}</span>'
+                indicators_html += '</div>'
+            
+            html += f'''
+                <div class="detail-card {status_class}" data-status="{status_class}" data-category="{r.payload_category}" data-name="{self._escape_html(r.payload_name)}">
+                    <div class="detail-header" onclick="toggleDetail(this)">
+                        <h4>
+                            <span class="badge {status_badge}">{status_text}</span>
+                            <span class="badge badge-category">{r.payload_category}</span>
+                            {self._escape_html(r.payload_name)}
+                        </h4>
+                        <div class="detail-meta">
+                            <span class="confidence {conf_class}">{r.confidence:.0%}</span>
+                            <span style="color: var(--text-secondary)">{r.response_time:.2f}s</span>
+                            <span class="expand-icon">▼</span>
+                        </div>
+                    </div>
+                    <div class="detail-body">
+                        <div class="io-section">
+                            <div class="io-label">
+                                <span>📤</span> INPUT PAYLOAD
+                                <button class="copy-btn" onclick="copyToClipboard(this, 'input-{idx}')">Copy</button>
+                            </div>
+                            <div class="io-content input" id="input-{idx}">{payload_text}</div>
+                        </div>
+                        <div class="io-section">
+                            <div class="io-label">
+                                <span>📥</span> LLM RESPONSE
+                                <button class="copy-btn" onclick="copyToClipboard(this, 'output-{idx}')">Copy</button>
+                            </div>
+                            <div class="io-content output {status_class}" id="output-{idx}">{response_text}</div>
+                        </div>
+                        {indicators_html}
+                        {f'<div style="margin-top: 15px; color: var(--danger);"><strong>Error:</strong> {self._escape_html(r.error)}</div>' if r.error else ''}
+                    </div>
+                </div>
+'''
+        
+        html += '''
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>📋 Summary Table</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Category</th>
+                        <th>Name</th>
+                        <th>Status</th>
+                        <th>Confidence</th>
+                        <th>Time</th>
+                    </tr>
+                </thead>
+                <tbody>
+'''
+        
+        for r in report.results[:100]:  # Limit to 100 for HTML
+            status_class = 'vulnerable' if r.is_vulnerable else 'defended'
+            status_text = '⚠️ VULNERABLE' if r.is_vulnerable else '✅ Defended'
+            if r.error:
+                status_text = f'❌ Error'
+                status_class = ''
+            conf_class = 'high' if r.confidence >= 0.7 else 'medium' if r.confidence >= 0.4 else 'low'
+            
+            html += f'''
+                    <tr>
+                        <td>{r.payload_id}</td>
+                        <td>{r.payload_category}</td>
+                        <td>{r.payload_name}</td>
+                        <td class="{status_class}">{status_text}</td>
+                        <td><span class="confidence {conf_class}">{r.confidence:.0%}</span></td>
+                        <td>{r.response_time:.2f}s</td>
+                    </tr>
+'''
+        
+        html += f'''
+                </tbody>
+            </table>
+        </div>
+        
+        <footer>
+            <p>Generated by <strong>promptmap</strong> by Jai</p>
+            <p>Scan completed: {report.scan_end[:19]}</p>
+            <p style="margin-top: 10px;">
+                <a href="https://owasp.org/www-project-top-10-for-large-language-model-applications/" style="color: var(--accent);">
+                    OWASP LLM Top 10
+                </a>
+            </p>
+        </footer>
+    </div>
+    
+    <script>
+        // Toggle individual detail card
+        function toggleDetail(header) {{
+            header.classList.toggle('expanded');
+            header.nextElementSibling.classList.toggle('expanded');
+        }}
+        
+        // Toggle all details
+        let allExpanded = false;
+        function toggleAllDetails() {{
+            allExpanded = !allExpanded;
+            document.querySelectorAll('.detail-header').forEach(header => {{
+                if (allExpanded) {{
+                    header.classList.add('expanded');
+                    header.nextElementSibling.classList.add('expanded');
+                }} else {{
+                    header.classList.remove('expanded');
+                    header.nextElementSibling.classList.remove('expanded');
+                }}
+            }});
+            document.querySelector('.expand-all-btn').textContent = allExpanded ? 'Collapse All' : 'Expand All';
+        }}
+        
+        // Filter results by status
+        function filterResults(status) {{
+            document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            document.querySelectorAll('.detail-card').forEach(card => {{
+                if (status === 'all') {{
+                    card.style.display = 'block';
+                }} else {{
+                    card.style.display = card.dataset.status === status ? 'block' : 'none';
+                }}
+            }});
+        }}
+        
+        // Search results
+        function searchResults(query) {{
+            const lowerQuery = query.toLowerCase();
+            document.querySelectorAll('.detail-card').forEach(card => {{
+                const name = card.dataset.name.toLowerCase();
+                const category = card.dataset.category.toLowerCase();
+                const content = card.textContent.toLowerCase();
+                card.style.display = (name.includes(lowerQuery) || category.includes(lowerQuery) || content.includes(lowerQuery)) ? 'block' : 'none';
+            }});
+        }}
+        
+        // Copy to clipboard
+        function copyToClipboard(btn, elementId) {{
+            const text = document.getElementById(elementId).textContent;
+            navigator.clipboard.writeText(text).then(() => {{
+                const originalText = btn.textContent;
+                btn.textContent = 'Copied!';
+                setTimeout(() => btn.textContent = originalText, 1500);
+            }});
+        }}
+        
+        // Collapsible sections (legacy)
+        document.querySelectorAll('.collapsible').forEach(item => {{
+            item.addEventListener('click', () => {{
+                const content = item.nextElementSibling;
+                content.classList.toggle('active');
+            }});
+        }});
+    </script>
+</body>
+</html>
+'''
+        
+        return html
+
+
+# Test standalone
+if __name__ == "__main__":
+    from dataclasses import dataclass, field
+    from typing import List, Dict
+    
+    @dataclass
+    class MockResult:
+        payload_id: str = "test_001"
+        payload_category: str = "jailbreak"
+        payload_name: str = "DAN Test"
+        payload_text: str = "Test payload"
+        response_text: str = "Test response"
+        is_vulnerable: bool = True
+        confidence: float = 0.85
+        indicators_found: List[str] = field(default_factory=lambda: ["DAN persona detected"])
+        response_time: float = 1.5
+        timestamp: str = "2024-01-01T00:00:00"
+        error: str = None
+    
+    @dataclass
+    class MockReport:
+        target_url: str = "https://api.example.com/chat"
+        scan_start: str = "2024-01-01T00:00:00"
+        scan_end: str = "2024-01-01T00:05:00"
+        total_payloads: int = 100
+        successful_injections: int = 15
+        failed_injections: int = 80
+        errors: int = 5
+        results: List[MockResult] = field(default_factory=lambda: [MockResult()])
+        vulnerability_summary: Dict[str, int] = field(default_factory=lambda: {"jailbreak": 5, "data_leakage": 3})
+    
+    reporter = ReportGenerator()
+    mock_report = MockReport()
+    
+    reporter.save(mock_report, "test_report.json", "json")
+    reporter.save(mock_report, "test_report.html", "html")
+    reporter.save(mock_report, "test_report.csv", "csv")
+    
+    print("✅ Test reports generated!")
