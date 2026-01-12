@@ -15,8 +15,8 @@ setup(
     description="LLM Security Testing Tool for Prompt Injection Vulnerabilities",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/jaikumar3/promptmap",
-    py_modules=["cli", "scanner", "payloads", "detector", "reporter", "judge", "request_parser"],
+    url="https://github.com/Jaikumar3/promptmap",
+    packages=find_packages(),
     classifiers=[
         "Development Status :: 4 - Beta",
         "Intended Audience :: Developers",
@@ -51,8 +51,7 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            "promptmap=cli:main",
-            "prompt-injection-scanner=cli:main",
+            "promptmap=promptmap.cli:main",
         ],
     },
     include_package_data=True,

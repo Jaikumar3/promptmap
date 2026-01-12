@@ -106,7 +106,7 @@ def scan(config_path, request_file, injection_point, proxy, categories, limit, o
             console.print(f"[red]❌ Request file not found: {request_file}[/red]")
             raise click.Abort()
         
-        from request_parser import RequestParser
+        from .request_parser import RequestParser
         
         console.print(f"[cyan]📄 Parsing request file: {request_file}[/cyan]")
         parser = RequestParser()
@@ -123,7 +123,7 @@ def scan(config_path, request_file, injection_point, proxy, categories, limit, o
             console.print(f"[dim]{parsed_config['target']['body_template'][:200]}...[/dim]")
         
         # Create scanner with parsed config
-        from scanner import PromptInjectionScanner
+        from .scanner import PromptInjectionScanner
         scanner = PromptInjectionScanner(config_path, proxy=proxy)
         
         # Override target config with parsed request
@@ -143,7 +143,7 @@ def scan(config_path, request_file, injection_point, proxy, categories, limit, o
             raise click.Abort()
         
         # Import here to avoid circular imports
-        from scanner import PromptInjectionScanner
+        from .scanner import PromptInjectionScanner
         scanner = PromptInjectionScanner(config_path, proxy=proxy)
     
     # Convert categories tuple to list or None
@@ -196,7 +196,7 @@ def test(payload, config_path, category):
         console.print(f"[red]❌ Config file not found: {config_path}[/red]")
         raise click.Abort()
     
-    from scanner import PromptInjectionScanner
+    from .scanner import PromptInjectionScanner
     
     scanner = PromptInjectionScanner(config_path)
     
@@ -249,7 +249,7 @@ def payloads(list_payloads, category, search, export):
     
     View, search, and export the built-in payload library.
     """
-    from payloads import PayloadManager
+    from .payloads import PayloadManager
     
     pm = PayloadManager()
     

@@ -22,13 +22,13 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
 from rich.table import Table
 from rich.panel import Panel
 
-from detector import VulnerabilityDetector
-from payloads import PayloadManager
-from reporter import ReportGenerator
+from .detector import VulnerabilityDetector
+from .payloads import PayloadManager
+from .reporter import ReportGenerator
 
 # Import LLM Judge for hybrid detection
 try:
-    from judge import LLMJudge, HybridDetector
+    from .judge import LLMJudge, HybridDetector
     JUDGE_AVAILABLE = True
 except ImportError:
     JUDGE_AVAILABLE = False

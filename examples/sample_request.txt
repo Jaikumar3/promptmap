@@ -1,0 +1,15 @@
+POST /api/chat HTTP/1.1
+Host: your-chatbot.example.com
+Content-Type: application/json
+Authorization: Bearer YOUR_TOKEN_HERE
+
+{"message": "*", "conversation_id": "conv_001"}
+
+# ============================================================
+# INSTRUCTIONS:
+# ============================================================
+# 1. Replace Host, URL, and headers with your target
+# 2. The * marks the injection point (where payloads go)
+#    Or use: FUZZ, {{prompt}}, {{payload}}, [INJECT]
+# 3. Save and run: promptmap scan -r request.txt
+# ============================================================
