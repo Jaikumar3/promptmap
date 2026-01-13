@@ -6,6 +6,8 @@ Author: Jai
 """
 
 import asyncio
+import sys
+import os
 import click
 from pathlib import Path
 from typing import List, Optional
@@ -13,6 +15,18 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+# Fix Windows Unicode output issues when piping
+if sys.platform == 'win32':
+    os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
+    try:
+        if not sys.stdout.isatty():
+            sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        if not sys.stderr.isatty():
+            sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except (AttributeError, OSError):
+        pass  # Ignore if reconfigure not available
+
+# Create console with proper settings for platform
 console = Console()
 
 
@@ -36,7 +50,7 @@ BANNER = r"""[bold cyan]
  | .__/|_|  \___/|_| |_| |_| \__|_| |_| |_|\__,_| .__/ 
  |_|                                            |_|    
 [/bold cyan]
-  [dim]LLM Security Testing Tool v2.3.0 by[/dim] [bold yellow]Jai[/bold yellow]
+  [dim]LLM Security Testing Tool v2.3.1 by[/dim] [bold yellow]Jai[/bold yellow]
   [dim]https://github.com/Jaikumar3/promptmap[/dim]
 """
 
@@ -104,7 +118,7 @@ HELP_TEXT = """
 
 
 @click.group(invoke_without_command=True)
-@click.version_option(version='2.3.0', prog_name='promptmap')
+@click.version_option(version='2.3.1', prog_name='promptmap')
 @click.pass_context
 def cli(ctx):
     """
