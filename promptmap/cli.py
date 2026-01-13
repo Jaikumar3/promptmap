@@ -50,7 +50,7 @@ BANNER = r"""[bold cyan]
  | .__/|_|  \___/|_| |_| |_| \__|_| |_| |_|\__,_| .__/ 
  |_|                                            |_|    
 [/bold cyan]
-  [dim]LLM Security Testing Tool v2.3.1 by[/dim] [bold yellow]Jai[/bold yellow]
+  [dim]LLM Security Testing Tool v2.4.0 by[/dim] [bold yellow]Jai[/bold yellow]
   [dim]https://github.com/Jaikumar3/promptmap[/dim]
 """
 
@@ -118,7 +118,7 @@ HELP_TEXT = """
 
 
 @click.group(invoke_without_command=True)
-@click.version_option(version='2.3.1', prog_name='promptmap')
+@click.version_option(version='2.4.0', prog_name='promptmap')
 @click.pass_context
 def cli(ctx):
     """
@@ -155,7 +155,7 @@ def cli(ctx):
 @click.option('-o', '--output', default=None,
               help='Output file path')
 @click.option('-f', '--format', 'output_format', 
-              type=click.Choice(['json', 'html', 'csv']), default='json',
+              type=click.Choice(['json', 'html', 'csv', 'pdf']), default='json',
               help='Report format [default: json]')
 @click.option('-v', '--verbose', is_flag=True, help='Show detailed output')
 @click.option('-q', '--quiet', is_flag=True, help='Minimal output (no banner)')
@@ -174,6 +174,7 @@ def scan(config_path, request_file, injection_point, proxy, payloads_file, trans
       promptmap scan -r request.txt --payloads custom.txt   # Custom payloads
       promptmap scan -r request.txt -cat system_prompt -l 5
       promptmap scan -r request.txt -o report.html -f html
+      promptmap scan -r request.txt -o report.pdf -f pdf    # PDF report
     
     \b
     ─────────────────────────────────────────────────────────────
