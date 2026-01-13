@@ -5,6 +5,155 @@ All notable changes to **promptmap** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-01-13
+
+### Added
+- **Chain Attacks** - Multi-turn conversation attacks (`promptmap chain`)
+  - New `chains.py` module with `ChainAttacker` class
+  - Based on academic research: [Foot In The Door](http://arxiv.org/abs/2502.19820)
+  - 8 built-in attack chains:
+    - `gradual_jailbreak` - Build trust over turns, then extract
+    - `roleplay_escalation` - Establish roleplay context, exploit it
+    - `authority_manipulation` - Impersonate authority figures
+    - `hypothetical_framing` - Frame requests as hypothetical
+    - `grandma_attack` - Emotional manipulation roleplay
+    - `dan_evolution` - Progressive DAN persona injection
+    - `context_overflow` - Overload context then inject
+    - `translation_attack` - Bypass filters via translation
+  - Custom chains via YAML definitions
+  - Conversation history support for multi-turn context
+  - Success indicator detection per turn
+  - Jailbreak detection with turn identification
+
+- **New CLI Command: `promptmap chain`**
+  - `--list` - List available chain attacks
+  - `--chain <name>` - Run specific chain by name
+  - `--chain <file.yaml>` - Run custom chain from YAML file
+  - `--all-chains` - Run all built-in chains
+  - `-o, --output` - Save results to JSON
+  - Full proxy support for Burp Suite
+
+- **Example Chain YAML Files**
+  - `chains/foot_in_door.yaml` - FITD technique
+  - `chains/research_legitimacy.yaml` - Academic impersonation
+  - `chains/developer_debug.yaml` - Developer mode exploitation
+
+### Usage
+```bash
+# List available chains
+promptmap chain --list
+
+# Run all built-in chains
+promptmap chain -r request.txt --all-chains
+
+# Run specific chain
+promptmap chain -r request.txt --chain gradual_jailbreak
+
+# Run custom chain from YAML
+promptmap chain -r request.txt --chain chains/custom.yaml
+
+# With proxy and output
+promptmap chain -r request.txt --chain dan_evolution --proxy http://127.0.0.1:8080 -o results.json
+```
+
+### Chain YAML Format
+```yaml
+name: "My Custom Chain"
+description: "What this chain does"
+technique: "foot_in_the_door"
+success_indicators:
+  - "system prompt"
+  - "my instructions"
+turns:
+  - message: "First turn message"
+    expect: accept
+  - message: "Second turn (attack)"
+    expect: leak
+```
+
+---
+
+## [2.0.0] - 2026-01-13
+
+### Added
+- **Custom Payloads Support** (`--payloads` option)
+  - Load external payload files: `promptmap scan -r req.txt --payloads custom.txt`
+  - One payload per line format
+  - Comments with `#`, empty lines ignored
+  - Example file at `examples/custom_payloads.txt`
+
+- **Response Analyzer** - Auto-detect leaked sensitive data
+  - New `analyzer.py` module with `ResponseAnalyzer` class
+  - Detects 25+ sensitive data types:
+    - **Cloud Credentials**: AWS keys, Azure keys, GCP keys
+    - **API Keys**: OpenAI, Anthropic, GitHub, Slack tokens
+    - **Secrets**: Private keys, SSH keys, JWTs, Bearer tokens
+    - **PII**: SSN, credit cards, emails, phone numbers
+    - **Infrastructure**: Internal IPs, database URLs, file paths
+    - **System Prompts**: Detects leaked instructions/context
+  - Severity classification: 🔴 Critical, 🟠 High, 🟡 Medium, 🟢 Low
+  - Risk scoring (0.0 - 1.0)
+  - Smart false positive detection
+  - Value masking for safe display
+
+- **Enhanced Scan Results**
+  - New "Sensitive Data Leaked" summary table
+  - Per-finding severity breakdown
+  - Masked values shown for each leaked secret
+  - Risk score in scan results
+
+- **New CLI Options**
+  - `--payloads FILE` - Load custom payload file
+  - `--analyze/--no-analyze` - Toggle response analysis (default: enabled)
+
+### Changed
+- Updated `ScanResult` dataclass with sensitive data fields
+- Updated `ScanReport` with aggregated sensitive data stats
+- Display shows leaked secrets with masked values
+- Version bumped to 2.0.0
+
+### Usage
+```bash
+# Scan with custom payloads
+promptmap scan -r request.txt --payloads my_payloads.txt
+
+# Disable response analysis (faster, less detail)
+promptmap scan -r request.txt --no-analyze
+
+# Full scan with proxy and custom payloads
+promptmap scan -r request.txt --proxy http://127.0.0.1:8080 --payloads custom.txt
+```
+
+### Example Output
+```
+📊 Scan Summary
+┌──────────────────────┬───────┐
+│ Metric               │ Value │
+├──────────────────────┼───────┤
+│ Total Payloads       │ 142   │
+│ Successful Injections│ 15    │
+│ Blocked/Failed       │ 127   │
+└──────────────────────┴───────┘
+
+🔐 Sensitive Data Leaked
+┌──────────────┬───────┐
+│ Severity     │ Count │
+├──────────────┼───────┤
+│ 🔴 CRITICAL  │ 2     │
+│ 🟠 HIGH      │ 5     │
+│ 🟡 MEDIUM    │ 3     │
+└──────────────┴───────┘
+
+⚠️ Successful Injection Payloads:
+• [system_prompt] System Prompt Extraction
+  Confidence: 85%
+  🔑 Leaked Data:
+    🔴 openai_key: sk-abc1****
+    🟠 email: ad****@company.com
+```
+
+---
+
 ## [1.3.0] - 2026-01-12
 
 ### Added

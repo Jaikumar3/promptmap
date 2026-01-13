@@ -55,3 +55,6 @@ Thumbs.db
 # Config with secrets
 .env.local
 *.env.local
+req.txt
+garak/
+*.bak

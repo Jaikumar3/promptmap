@@ -9,8 +9,12 @@ from .scanner import PromptInjectionScanner, ScanResult, ScanReport
 from .payloads import PayloadManager
 from .detector import VulnerabilityDetector
 from .reporter import ReportGenerator
+from .analyzer import ResponseAnalyzer, AnalysisResult, SensitiveDataType
+from .chains import ChainAttacker, ChainDefinition, ChainResult
+from .transformers import PayloadTransformer, TransformResult
+from .verifier import VulnerabilityVerifier, VerificationResult, VerificationStatus
 
-__version__ = "1.3.0"
+__version__ = "2.2.1"
 __author__ = "Jai"
 
 __all__ = [
@@ -20,4 +24,15 @@ __all__ = [
     "PayloadManager",
     "VulnerabilityDetector",
     "ReportGenerator",
+    "ResponseAnalyzer",
+    "AnalysisResult",
+    "SensitiveDataType",
+    "ChainAttacker",
+    "ChainDefinition",
+    "ChainResult",
+    "PayloadTransformer",
+    "TransformResult",
+    "VulnerabilityVerifier",
+    "VerificationResult",
+    "VerificationStatus",
 ]

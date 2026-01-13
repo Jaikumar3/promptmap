@@ -33,6 +33,20 @@ try:
 except ImportError:
     JUDGE_AVAILABLE = False
 
+# Import Response Analyzer for leaked secrets detection
+try:
+    from .analyzer import ResponseAnalyzer, AnalysisResult
+    ANALYZER_AVAILABLE = True
+except ImportError:
+    ANALYZER_AVAILABLE = False
+
+# Import Verifier for reducing false positives
+try:
+    from .verifier import VulnerabilityVerifier, VerificationStatus
+    VERIFIER_AVAILABLE = True
+except ImportError:
+    VERIFIER_AVAILABLE = False
+
 load_dotenv()
 console = Console()
 
@@ -51,6 +65,15 @@ class ScanResult:
     response_time: float
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
     error: Optional[str] = None
+    # Response analysis fields
+    sensitive_data_found: bool = False
+    sensitive_data_summary: str = ""
+    sensitive_findings: List[Dict] = field(default_factory=list)
+    risk_score: float = 0.0
+    # Verification fields (to reduce false positives)
+    verified: bool = False
+    verification_status: str = "unverified"
+    verification_reason: str = ""
 
 
 @dataclass
@@ -65,6 +88,9 @@ class ScanReport:
     errors: int
     results: List[ScanResult]
     vulnerability_summary: Dict[str, int]
+    # New fields for sensitive data analysis
+    total_sensitive_findings: int = 0
+    sensitive_data_severity: Dict[str, int] = field(default_factory=dict)
 
 
 class PromptInjectionScanner:
@@ -81,13 +107,25 @@ class PromptInjectionScanner:
     - Multi-turn attacks
     """
     
-    def __init__(self, config_path: str = "config.yaml", proxy: str = None):
+    def __init__(self, config_path: str = "config.yaml", proxy: str = None, enable_analyzer: bool = True):
         self.config = self._load_config(config_path)
         self.proxy = proxy
         self.detector = VulnerabilityDetector(self.config.get('detection', {}))
         self.payload_manager = PayloadManager()
         self.reporter = ReportGenerator()
         self.results: List[ScanResult] = []
+        
+        # Initialize Response Analyzer for leaked secrets detection
+        self.analyzer = None
+        if enable_analyzer and ANALYZER_AVAILABLE:
+            self.analyzer = ResponseAnalyzer()
+            console.print("[green]✓ Response analyzer enabled (detects leaked secrets/PII)[/green]")
+        
+        # Initialize Verifier for reducing false positives
+        self.verifier = None
+        if VERIFIER_AVAILABLE:
+            self.verifier = VulnerabilityVerifier()
+            console.print("[green]✓ Double verification enabled (reduces false positives)[/green]")
         
         # Initialize hybrid detector if available and configured
         self.hybrid_detector = None
@@ -186,7 +224,30 @@ class PromptInjectionScanner:
     
     def _extract_response(self, data: Any, path: str) -> str:
         """Extract response text from JSON using dot/bracket notation"""
-        if not path:
+        # Auto-detect common LLM response formats
+        if not path or path == 'auto':
+            # Try OpenAI format: choices[0].message.content
+            try:
+                content = data['choices'][0]['message']['content']
+                if content:
+                    return str(content)
+            except (KeyError, IndexError, TypeError):
+                pass
+            
+            # Try Anthropic format: content[0].text
+            try:
+                content = data['content'][0]['text']
+                if content:
+                    return str(content)
+            except (KeyError, IndexError, TypeError):
+                pass
+            
+            # Try simple response format: response or text
+            for key in ['response', 'text', 'output', 'result', 'answer']:
+                if key in data and data[key]:
+                    return str(data[key])
+            
+            # Fall back to full JSON
             return str(data)
         
         import re
@@ -248,6 +309,89 @@ class PromptInjectionScanner:
                     payload_info.get('category', 'unknown')
                 )
             
+            # Analyze response for leaked sensitive data
+            sensitive_data_found = False
+            sensitive_data_summary = ""
+            sensitive_findings = []
+            risk_score = 0.0
+            
+            if self.analyzer and response_text:
+                analysis_result = self.analyzer.analyze(response_text, payload_info['payload'])
+                risk_score = analysis_result.risk_score
+                
+                # Convert findings to dict for serialization
+                # But use verifier to filter false positives
+                for finding in analysis_result.findings:
+                    # Use verifier to check if this sensitive data should be flagged
+                    should_flag = True
+                    flag_reason = "Detected"
+                    
+                    if self.verifier:
+                        should_flag, flag_reason = self.verifier.should_verify_sensitive_data(
+                            finding.data_type.value,
+                            finding.severity,
+                            response_text,
+                            payload_info['payload']
+                        )
+                    
+                    if should_flag:
+                        sensitive_findings.append({
+                            'type': finding.data_type.value,
+                            'masked_value': finding.masked_value,
+                            'severity': finding.severity,
+                            'description': finding.description,
+                            'verified': True,
+                            'reason': flag_reason
+                        })
+                
+                # Update sensitive_data_found based on verified findings only
+                sensitive_data_found = len(sensitive_findings) > 0
+                if sensitive_data_found:
+                    sensitive_data_summary = f"Found {len(sensitive_findings)} verified sensitive data item(s)"
+                else:
+                    sensitive_data_summary = "No verified sensitive data detected"
+                
+                # Only mark as vulnerable if we have VERIFIED sensitive data
+                if sensitive_data_found and not detection_result['is_vulnerable']:
+                    # Only flag as vulnerable if severity is high or critical
+                    high_severity_findings = [f for f in sensitive_findings if f['severity'] in ('critical', 'high')]
+                    if high_severity_findings:
+                        detection_result['is_vulnerable'] = True
+                        detection_result['confidence'] = max(detection_result['confidence'], risk_score)
+                        detection_result['indicators'].extend([f"LEAKED: {f['type']}" for f in high_severity_findings[:3]])
+            
+            # DOUBLE VERIFICATION: Use verifier to reduce false positives AND catch false negatives
+            verified = False
+            verification_status = "unverified"
+            verification_reason = ""
+            
+            if self.verifier:
+                # ALWAYS run verification - catches both false positives AND false negatives
+                # (e.g., model that says "I won't do this but..." and then does it)
+                verification_result = self.verifier.verify_detection(
+                    payload=payload_info['payload'],
+                    response=response_text,
+                    initial_vulnerable=detection_result['is_vulnerable'],
+                    initial_confidence=detection_result['confidence'],
+                    initial_indicators=detection_result['indicators'],
+                    category=payload_info.get('category', 'unknown')
+                )
+                
+                # Update based on verification
+                detection_result['is_vulnerable'] = verification_result.final_vulnerable
+                detection_result['confidence'] = max(0.0, detection_result['confidence'] + verification_result.confidence_adjustment)
+                verified = True
+                verification_status = verification_result.verification_status.value
+                verification_reason = verification_result.reason
+                
+                # Add verification indicator
+                if verification_result.verification_status.value == "confirmed":
+                    detection_result['indicators'].append(f"✓ Verified: {verification_reason}")
+                elif verification_result.verification_status.value == "false_positive":
+                    detection_result['indicators'] = [f"✗ False positive: {verification_reason}"]
+                elif verification_result.verification_status.value == "jailbreak_with_disclaimer":
+                    detection_result['indicators'].append(f"⚠ Jailbreak: {verification_reason}")
+            
             return ScanResult(
                 payload_id=payload_info.get('id', 'unknown'),
                 payload_category=payload_info.get('category', 'unknown'),
@@ -257,7 +401,14 @@ class PromptInjectionScanner:
                 is_vulnerable=detection_result['is_vulnerable'],
                 confidence=detection_result['confidence'],
                 indicators_found=detection_result['indicators'],
-                response_time=response_time
+                response_time=response_time,
+                sensitive_data_found=sensitive_data_found,
+                sensitive_data_summary=sensitive_data_summary,
+                sensitive_findings=sensitive_findings,
+                risk_score=risk_score,
+                verified=verified,
+                verification_status=verification_status,
+                verification_reason=verification_reason
             )
     
     async def scan_batch(self, payloads: List[Dict], progress_callback=None) -> List[ScanResult]:
@@ -285,7 +436,8 @@ class PromptInjectionScanner:
         self,
         categories: Optional[List[str]] = None,
         custom_payloads: Optional[List[str]] = None,
-        limit: Optional[int] = None
+        limit: Optional[int] = None,
+        transform_name: Optional[str] = None
     ) -> ScanReport:
         """
         Run a comprehensive scan against the target.
@@ -294,12 +446,23 @@ class PromptInjectionScanner:
             categories: List of payload categories to test (None = all)
             custom_payloads: Additional custom payloads to test
             limit: Maximum number of payloads to test (None = all)
+            transform_name: Name of transformation to apply to payloads (None = no transform)
         """
         scan_start = datetime.now().isoformat()
         
+        # Initialize transformer if specified
+        transformer = None
+        if transform_name:
+            try:
+                from .transformers import PayloadTransformer
+                transformer = PayloadTransformer()
+            except ImportError:
+                console.print("[yellow]⚠ Transformer module not available[/yellow]")
+        
         console.print(Panel.fit(
-            "[bold cyan]�️ promptmap[/bold cyan]\n"
-            f"[dim]Target: {self.config['target']['url']}[/dim]",
+            "[bold cyan]🗺️ promptmap[/bold cyan]\n"
+            f"[dim]Target: {self.config['target']['url']}[/dim]" +
+            (f"\n[dim]Transform: {transform_name}[/dim]" if transform_name else ""),
             title="LLM Security Scanner"
         ))
         
@@ -315,6 +478,15 @@ class PromptInjectionScanner:
                     'name': f'Custom Payload {i+1}',
                     'payload': cp
                 })
+        
+        # Apply transformation if specified
+        if transformer and transform_name:
+            console.print(f"[magenta]🔄 Transforming payloads with: {transform_name}[/magenta]")
+            for p in payloads:
+                original = p['payload']
+                result = transformer.transform(original, transform_name)
+                p['payload'] = result.transformed
+                p['original_payload'] = original  # Keep original for reporting
         
         # Apply limit if specified
         if limit and limit > 0:
@@ -351,6 +523,16 @@ class PromptInjectionScanner:
             if r.is_vulnerable:
                 vuln_summary[r.payload_category] = vuln_summary.get(r.payload_category, 0) + 1
         
+        # Sensitive data statistics
+        total_sensitive = 0
+        sensitive_severity = {'critical': 0, 'high': 0, 'medium': 0, 'low': 0}
+        for r in self.results:
+            if r.sensitive_data_found:
+                total_sensitive += len(r.sensitive_findings)
+                for finding in r.sensitive_findings:
+                    sev = finding.get('severity', 'low')
+                    sensitive_severity[sev] = sensitive_severity.get(sev, 0) + 1
+        
         report = ScanReport(
             target_url=self.config['target']['url'],
             scan_start=scan_start,
@@ -360,7 +542,9 @@ class PromptInjectionScanner:
             failed_injections=failed,
             errors=errors,
             results=self.results,
-            vulnerability_summary=vuln_summary
+            vulnerability_summary=vuln_summary,
+            total_sensitive_findings=total_sensitive,
+            sensitive_data_severity=sensitive_severity
         )
         
         # Display results
@@ -384,6 +568,22 @@ class PromptInjectionScanner:
         
         console.print(summary_table)
         
+        # Sensitive Data Findings (NEW)
+        if report.total_sensitive_findings > 0:
+            console.print("\n")
+            sensitive_table = Table(title="🔐 Sensitive Data Leaked", show_header=True)
+            sensitive_table.add_column("Severity", style="cyan")
+            sensitive_table.add_column("Count", style="red")
+            
+            severity_icons = {'critical': '🔴', 'high': '🟠', 'medium': '🟡', 'low': '🟢'}
+            for sev in ['critical', 'high', 'medium', 'low']:
+                count = report.sensitive_data_severity.get(sev, 0)
+                if count > 0:
+                    sensitive_table.add_row(f"{severity_icons[sev]} {sev.upper()}", str(count))
+            
+            sensitive_table.add_row("[bold]TOTAL[/bold]", f"[bold]{report.total_sensitive_findings}[/bold]")
+            console.print(sensitive_table)
+        
         # Vulnerability breakdown
         if report.vulnerability_summary:
             console.print("\n")
@@ -406,6 +606,13 @@ class PromptInjectionScanner:
                 console.print(f"[red]• [{r.payload_category}][/red] {r.payload_name}")
                 console.print(f"  [dim]Confidence: {r.confidence:.0%}[/dim]")
                 console.print(f"  [dim]Indicators: {', '.join(r.indicators_found[:3])}[/dim]")
+                
+                # Show sensitive data findings if any
+                if r.sensitive_data_found and r.sensitive_findings:
+                    console.print(f"  [bold yellow]🔑 Leaked Data:[/bold yellow]")
+                    for finding in r.sensitive_findings[:3]:
+                        icon = {'critical': '🔴', 'high': '🟠', 'medium': '🟡', 'low': '🟢'}.get(finding['severity'], '⚪')
+                        console.print(f"    {icon} {finding['type']}: {finding['masked_value']}")
                 console.print()
     
     def save_report(self, report: ScanReport, output_format: str = "json"):

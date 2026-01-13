@@ -10,7 +10,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="promptmap",
-    version="1.3.0",
+    version="2.0.0",
     author="Jai",
     description="LLM Security Testing Tool for Prompt Injection Vulnerabilities",
     long_description=long_description,
