@@ -148,7 +148,7 @@ def cli(ctx):
                                  'emoji', 'poetry', 'code', 'json', 'markdown', 'whitespace',
                                  'pig_latin', 'caesar', 'binary', 'hex', 'mixed']),
               help='Transform payloads (encode/obfuscate) before sending')
-@click.option('--full', is_flag=True, 
+@click.option('-F', '--full', is_flag=True, 
               help='FULL SCAN: Run all payloads + all transforms + all chain attacks')
 @click.option('-cat', '--categories', multiple=True,
               help='Payload categories [can repeat: -cat jailbreak -cat system_prompt]')
@@ -344,7 +344,7 @@ def scan(config_path, request_file, injection_point, proxy, payloads_file, trans
             from .chains import ChainAttacker
             chain_attacker = ChainAttacker(scanner.config, proxy=proxy)
             
-            chain_names = chain_attacker.list_chains()
+            chain_names = chain_attacker.get_builtin_chains()
             chain_vulns = 0
             for c_name in chain_names:
                 console.print(f"[dim]  Running chain: {c_name}...[/dim]")

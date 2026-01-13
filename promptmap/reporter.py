@@ -196,7 +196,7 @@ class ReportGenerator:
         elements.append(cat_table)
         elements.append(Spacer(1, 20))
         
-        # Successful Injections (Top 30)
+        # Successful Injections (Top 30) - Summary Table
         vulnerable_results = [r for r in report.results if r.is_vulnerable]
         if vulnerable_results:
             elements.append(Paragraph("Successful Injections (Top 30)", heading_style))
@@ -226,6 +226,77 @@ class ReportGenerator:
                 ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#fff5f5')]),
             ]))
             elements.append(vuln_table)
+            elements.append(PageBreak())
+            
+            # DETAILED FINDINGS - Full Input/Output for each vulnerability
+            elements.append(Paragraph("Detailed Vulnerability Findings", heading_style))
+            elements.append(Paragraph(
+                "Full payload input and LLM response for each successful injection:",
+                ParagraphStyle('Desc', fontSize=9, textColor=colors.grey, spaceAfter=15)
+            ))
+            
+            detail_style = ParagraphStyle(
+                'DetailText',
+                parent=styles['Normal'],
+                fontSize=8,
+                fontName='Courier',
+                leftIndent=10,
+                rightIndent=10,
+                spaceAfter=5,
+                wordWrap='LTR'
+            )
+            
+            label_style = ParagraphStyle(
+                'LabelStyle',
+                parent=styles['Normal'],
+                fontSize=9,
+                fontName='Helvetica-Bold',
+                textColor=colors.HexColor('#1a1a2e'),
+                spaceBefore=10,
+                spaceAfter=5
+            )
+            
+            for idx, r in enumerate(sorted(vulnerable_results, key=lambda x: -x.confidence)[:15], 1):
+                # Vulnerability header
+                elements.append(Paragraph(
+                    f"#{idx} - {r.payload_name} [{r.payload_category}] - {r.confidence:.0%} confidence",
+                    ParagraphStyle('VulnHeader', fontSize=10, fontName='Helvetica-Bold', 
+                                   textColor=colors.HexColor('#dc3545'), spaceBefore=15, spaceAfter=5)
+                ))
+                
+                # Indicators
+                if r.indicators_found:
+                    indicators_text = ", ".join(r.indicators_found[:5])
+                    elements.append(Paragraph(f"Indicators: {indicators_text}", 
+                        ParagraphStyle('Ind', fontSize=8, textColor=colors.grey, spaceAfter=8)))
+                
+                # Input Payload
+                elements.append(Paragraph("INPUT PAYLOAD:", label_style))
+                payload_text = getattr(r, 'payload_text', 'N/A') or 'N/A'
+                # Truncate very long payloads
+                if len(payload_text) > 1500:
+                    payload_text = payload_text[:1500] + "... [truncated]"
+                # Escape special characters for PDF
+                payload_text = payload_text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                elements.append(Paragraph(payload_text, detail_style))
+                
+                # Output Response  
+                elements.append(Paragraph("LLM RESPONSE:", label_style))
+                response_text = getattr(r, 'response_text', 'N/A') or 'N/A'
+                # Truncate very long responses
+                if len(response_text) > 2000:
+                    response_text = response_text[:2000] + "... [truncated]"
+                response_text = response_text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                elements.append(Paragraph(response_text, detail_style))
+                
+                # Separator
+                elements.append(Spacer(1, 10))
+                elements.append(Paragraph("─" * 80, ParagraphStyle('Sep', fontSize=6, textColor=colors.lightgrey)))
+                
+                # Page break every 3 vulnerabilities
+                if idx % 3 == 0 and idx < len(vulnerable_results[:15]):
+                    elements.append(PageBreak())
+            
             elements.append(PageBreak())
         
         # Full Results Table
