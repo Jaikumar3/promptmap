@@ -50,7 +50,7 @@ BANNER = r"""[bold cyan]
  | .__/|_|  \___/|_| |_| |_| \__|_| |_| |_|\__,_| .__/ 
  |_|                                            |_|    
 [/bold cyan]
-  [dim]LLM Security Testing Tool v2.4.0 by[/dim] [bold yellow]Jai[/bold yellow]
+  [dim]LLM Security Testing Tool v2.5.0 by[/dim] [bold yellow]Jai[/bold yellow]
   [dim]https://github.com/Jaikumar3/promptmap[/dim]
 """
 
@@ -118,7 +118,7 @@ HELP_TEXT = """
 
 
 @click.group(invoke_without_command=True)
-@click.version_option(version='2.4.0', prog_name='promptmap')
+@click.version_option(version='2.5.0', prog_name='promptmap')
 @click.pass_context
 def cli(ctx):
     """
@@ -148,6 +148,8 @@ def cli(ctx):
                                  'emoji', 'poetry', 'code', 'json', 'markdown', 'whitespace',
                                  'pig_latin', 'caesar', 'binary', 'hex', 'mixed']),
               help='Transform payloads (encode/obfuscate) before sending')
+@click.option('--full', is_flag=True, 
+              help='FULL SCAN: Run all payloads + all transforms + all chain attacks')
 @click.option('-cat', '--categories', multiple=True,
               help='Payload categories [can repeat: -cat jailbreak -cat system_prompt]')
 @click.option('-l', '--limit', default=None, type=int,
@@ -161,7 +163,7 @@ def cli(ctx):
 @click.option('-q', '--quiet', is_flag=True, help='Minimal output (no banner)')
 @click.option('--analyze/--no-analyze', default=True,
               help='Enable response analysis for leaked secrets [default: enabled]')
-def scan(config_path, request_file, injection_point, proxy, payloads_file, transform_name, categories, limit, output, output_format, verbose, quiet, analyze):
+def scan(config_path, request_file, injection_point, proxy, payloads_file, transform_name, full, categories, limit, output, output_format, verbose, quiet, analyze):
     """
     🎯 Run vulnerability scan against target LLM.
     
@@ -170,11 +172,21 @@ def scan(config_path, request_file, injection_point, proxy, payloads_file, trans
     EXAMPLES:
     ─────────────────────────────────────────────────────────────
       promptmap scan -r request.txt                         # Basic scan
+      promptmap scan -r request.txt --full                  # FULL SCAN (all attacks)
       promptmap scan -r request.txt --proxy http://127.0.0.1:8080
       promptmap scan -r request.txt --payloads custom.txt   # Custom payloads
       promptmap scan -r request.txt -cat system_prompt -l 5
       promptmap scan -r request.txt -o report.html -f html
-      promptmap scan -r request.txt -o report.pdf -f pdf    # PDF report
+      promptmap scan -r request.txt -o report.pdf -f pdf --full  # Full scan + PDF
+    
+    \b
+    ─────────────────────────────────────────────────────────────
+    --full FLAG (COMPREHENSIVE SCAN):
+    ─────────────────────────────────────────────────────────────
+      Runs ALL attack types in sequence:
+      1. Standard payloads (142)
+      2. Transformed payloads (16 transforms x top payloads)
+      3. Chain attacks (8 multi-turn attacks)
     
     \b
     ─────────────────────────────────────────────────────────────
@@ -283,12 +295,127 @@ def scan(config_path, request_file, injection_point, proxy, payloads_file, trans
     
     # Run the scan
     try:
-        report = asyncio.run(scanner.run_full_scan(
-            categories=cat_list, 
-            custom_payloads=custom_payloads if 'custom_payloads' in dir() and custom_payloads else None,
-            limit=limit,
-            transform_name=transform_name
-        ))
+        # FULL SCAN MODE: Run all attack types
+        if full:
+            console.print("\n[bold magenta]🚀 FULL SCAN MODE - Running ALL attack types[/bold magenta]")
+            console.print("[dim]This includes: standard payloads + transforms + chain attacks[/dim]\n")
+            
+            all_results = []
+            total_vulns = 0
+            
+            # Phase 1: Standard payloads
+            console.print("[bold cyan]━━━ Phase 1/3: Standard Payloads ━━━[/bold cyan]")
+            report = asyncio.run(scanner.run_full_scan(
+                categories=cat_list,
+                custom_payloads=custom_payloads if 'custom_payloads' in dir() and custom_payloads else None,
+                limit=limit,
+                transform_name=None
+            ))
+            all_results.extend(report.results)
+            phase1_vulns = report.successful_injections
+            total_vulns += phase1_vulns
+            console.print(f"[green]✓[/green] Phase 1 complete: {phase1_vulns} vulnerabilities found\n")
+            
+            # Phase 2: Transformed payloads (top 10 payloads x key transforms)
+            console.print("[bold cyan]━━━ Phase 2/3: Transform Attacks ━━━[/bold cyan]")
+            key_transforms = ['base64', 'leetspeak', 'homoglyph', 'rot13', 'caesar', 'mixed']
+            from .transformers import PayloadTransformer
+            transformer = PayloadTransformer()
+            
+            for t_name in key_transforms:
+                console.print(f"[dim]  Running transform: {t_name}...[/dim]")
+                try:
+                    t_report = asyncio.run(scanner.run_full_scan(
+                        categories=['jailbreak', 'system_prompt'],  # Focus on key categories
+                        limit=10,  # Top 10 payloads per category
+                        transform_name=t_name
+                    ))
+                    # Tag results with transform info
+                    for r in t_report.results:
+                        r.payload_category = f"{r.payload_category}+{t_name}"
+                    all_results.extend(t_report.results)
+                    total_vulns += t_report.successful_injections
+                except Exception as e:
+                    console.print(f"[yellow]  ⚠ Transform {t_name} failed: {e}[/yellow]")
+            console.print(f"[green]✓[/green] Phase 2 complete: {total_vulns - phase1_vulns} additional vulnerabilities\n")
+            
+            # Phase 3: Chain attacks
+            console.print("[bold cyan]━━━ Phase 3/3: Chain Attacks ━━━[/bold cyan]")
+            from .chains import ChainAttacker
+            chain_attacker = ChainAttacker(scanner.config, proxy=proxy)
+            
+            chain_names = chain_attacker.list_chains()
+            chain_vulns = 0
+            for c_name in chain_names:
+                console.print(f"[dim]  Running chain: {c_name}...[/dim]")
+                try:
+                    chain_result = asyncio.run(chain_attacker.execute_chain(c_name))
+                    if chain_result.get('success'):
+                        chain_vulns += 1
+                        # Create a result-like object for the chain
+                        from .scanner import ScanResult
+                        from datetime import datetime
+                        chain_scan_result = ScanResult(
+                            payload_id=f"chain_{c_name}",
+                            payload_category="chain_attack",
+                            payload_name=c_name,
+                            payload_text=str(chain_result.get('conversation', [])),
+                            response_text=str(chain_result.get('final_response', '')),
+                            is_vulnerable=True,
+                            confidence=0.8,
+                            indicators_found=['chain_success'],
+                            response_time=chain_result.get('total_time', 0),
+                            timestamp=datetime.now().isoformat()
+                        )
+                        all_results.append(chain_scan_result)
+                except Exception as e:
+                    console.print(f"[yellow]  ⚠ Chain {c_name} failed: {e}[/yellow]")
+            
+            total_vulns += chain_vulns
+            console.print(f"[green]✓[/green] Phase 3 complete: {chain_vulns} chain attacks succeeded\n")
+            
+            # Build consolidated report
+            from .scanner import ScanReport
+            from datetime import datetime
+            
+            # Count by category
+            vuln_summary = {}
+            for r in all_results:
+                if r.is_vulnerable:
+                    cat = r.payload_category.split('+')[0]  # Remove transform suffix
+                    vuln_summary[cat] = vuln_summary.get(cat, 0) + 1
+            
+            report = ScanReport(
+                target_url=scanner.config['target']['url'],
+                scan_start=report.scan_start,
+                scan_end=datetime.now().isoformat(),
+                total_payloads=len(all_results),
+                successful_injections=sum(1 for r in all_results if r.is_vulnerable),
+                failed_injections=sum(1 for r in all_results if not r.is_vulnerable and not r.error),
+                errors=sum(1 for r in all_results if r.error),
+                results=all_results,
+                vulnerability_summary=vuln_summary
+            )
+            
+            # Display full scan summary
+            console.print(Panel(
+                f"[bold green]FULL SCAN COMPLETE[/bold green]\n\n"
+                f"Total Payloads Tested: [cyan]{report.total_payloads}[/cyan]\n"
+                f"Standard Attacks: [cyan]{len([r for r in all_results if '+' not in r.payload_category and r.payload_category != 'chain_attack'])}[/cyan]\n"
+                f"Transform Attacks: [cyan]{len([r for r in all_results if '+' in r.payload_category])}[/cyan]\n"
+                f"Chain Attacks: [cyan]{len([r for r in all_results if r.payload_category == 'chain_attack'])}[/cyan]\n\n"
+                f"[bold red]Vulnerabilities Found: {report.successful_injections}[/bold red]",
+                title="🎯 Full Scan Results",
+                border_style="green"
+            ))
+        else:
+            # Standard scan (original behavior)
+            report = asyncio.run(scanner.run_full_scan(
+                categories=cat_list, 
+                custom_payloads=custom_payloads if 'custom_payloads' in dir() and custom_payloads else None,
+                limit=limit,
+                transform_name=transform_name
+            ))
         
         # Save report
         if output:
